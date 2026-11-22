@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.*
@@ -17,6 +18,25 @@ class MainActivity : Activity() {
     private val accent = Color.rgb(173, 92, 245)
     private val data get() = getSharedPreferences("stock_data", MODE_PRIVATE)
     private lateinit var root: LinearLayout
+    private val soft = Color.rgb(31, 25, 49)
+    private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
+    private fun shape(color: Int, radius: Int = 18): GradientDrawable = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
+    private fun card(title: String, value: String, color: Int = Color.WHITE): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = shape(soft)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            addView(txt(title, 13f, Color.rgb(197, 186, 215)))
+            addView(txt(value, 20f, color))
+        }
+    private fun rowCards(a: Pair<String,String>, b: Pair<String,String>, highlight: Boolean = false) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val left = card(a.first,a.second,if(highlight) Color.rgb(103,240,157) else Color.WHITE)
+        val right = card(b.first,b.second)
+        row.addView(left, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(8) })
+        row.addView(right, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(row, LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(9) })
+    }
     private val fmt = DecimalFormat("0.00")
     private fun txt(s: String, size: Float = 17f, color: Int = Color.WHITE): TextView =
         TextView(this).apply { text = s; textSize = size; setTextColor(color); gravity = Gravity.RIGHT; setPadding(14, 14, 14, 14) }
@@ -29,21 +49,47 @@ class MainActivity : Activity() {
     private fun amount(s: String): Double = s.trim().replace(",", ".").toDoubleOrNull() ?: 0.0
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); home() }
     private fun page(title: String) {
-        val scroll = ScrollView(this).apply { setBackgroundColor(bg); fitsSystemWindows = true }
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 32, 24, 60) }
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        val frame = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg) }
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(18), dp(16), dp(30))
+        }
         scroll.addView(root)
-        setContentView(scroll)
-        root.addView(txt(title, 25f))
+        frame.addView(scroll, LinearLayout.LayoutParams(-1,0,1f))
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = shape(Color.rgb(24, 19, 39), 20)
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+        }
+        listOf("⌂\nالرئيسية", "▣\nالمخزون", "🛒\nالمبيعات", "▥\nالتقارير").forEachIndexed { index, text ->
+            val item = TextView(this).apply {
+                this.text=text; textSize=12f; gravity=Gravity.CENTER; setTextColor(if ((index==0 && title.contains("STOCK")) || title.contains(text.substringAfter("\n"))) accent else Color.WHITE)
+                setPadding(0,dp(8),0,dp(8))
+                setOnClickListener { when(index) { 0->home(); 1->inventory(); 2->sales(); else->sales() } }
+            }
+            nav.addView(item,LinearLayout.LayoutParams(0,dp(59),1f))
+        }
+        frame.addView(nav)
+        setContentView(frame)
+        if (!title.contains("STOCK")) root.addView(txt(title, 23f))
     }
     private fun menu() {
-        root.addView(button("الرئيسية") { home() })
-        root.addView(button("إضافة مشتريات") { addPurchase() })
-        root.addView(button("المخزون") { inventory() })
-        root.addView(button("المبيعات") { sales() })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val purchase = button("🛒  شراء جديد") { addPurchase() }
+        val sell = button("＋  بيع قطعة") { inventory() }
+        row.addView(purchase, LinearLayout.LayoutParams(0,dp(55),1f).apply { marginEnd=dp(8) })
+        row.addView(sell,LinearLayout.LayoutParams(0,dp(55),1f))
+        root.addView(row)
     }
     private fun home() {
-        page("BECHIR STOCK  |  بشير ستوك")
-        root.addView(txt("إدارة تجارة الفريب الخاصة بي", 16f, Color.LTGRAY))
+        page("BECHIR STOCK")
+        root.addView(txt("♧", 38f, accent).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
+        root.addView(txt("BECHIR STOCK", 23f).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
+        root.addView(txt("بشير ستوك", 19f).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
+        root.addView(txt("إدارة تجارة الفريب الخاصة بي", 14f,Color.rgb(197,186,215)).apply { gravity=Gravity.CENTER })
         val arr = items()
         var stock = 0; var sold = 0; var cost = 0.0; var revenue = 0.0; var profit = 0.0
         for (i in 0 until arr.length()) {
@@ -53,12 +99,12 @@ class MainActivity : Activity() {
             stock += quantity - soldQty; sold += soldQty; cost += (quantity - soldQty) * unitCost
             revenue += soldQty * sale; profit += soldQty * (sale - unitCost)
         }
-        root.addView(txt("المخزون: $stock قطعة", 21f))
-        root.addView(txt("القطع المباعة: $sold", 20f))
-        root.addView(txt("قيمة المخزون بالتكلفة: ${fmt.format(cost)} د.ت", 19f))
-        root.addView(txt("إجمالي المبيعات: ${fmt.format(revenue)} د.ت", 19f))
-        root.addView(txt("الربح المحقق: ${fmt.format(profit)} د.ت", 21f, Color.rgb(103, 240, 157)))
+        root.addView(txt("ملخص تجارتك", 16f, accent))
+        rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت", "المبيعات" to "$sold قطعة",true)
+        rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
+        rowCards("المشتريات المتبقية" to "${fmt.format(cost)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
+        root.addView(txt("جميع بياناتك محفوظة محليًا على هذا الهاتف.",13f,Color.LTGRAY))
     }
     private fun addPurchase() {
         page("إضافة شراء جديد")
