@@ -27,21 +27,35 @@ class MainActivity : Activity() {
     private val soft = Color.rgb(31, 25, 49)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private fun hanger(): View = object : View(this) {
-        private val paint = Paint(3).apply { color = accent; style = Paint.Style.STROKE; strokeWidth = dp(2).toFloat(); strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent
+            style = Paint.Style.STROKE
+            strokeWidth = dp(2).toFloat()
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val cx=width/2f; val cy=height/2f
-            val path=Path().apply {
-                moveTo(cx-dp(3),cy-dp(9))
-                cubicTo(cx-dp(10),cy-dp(20),cx+dp(9),cy-dp(23),cx+dp(7),cy-dp(11))
-                cubicTo(cx+dp(6),cy-dp(6),cx+dp(1),cy-dp(6),cx,cy-dp(3))
-                lineTo(cx+dp(28),cy+dp(15))
-                quadTo(cx+dp(31),cy+dp(21),cx+dp(22),cy+dp(21))
-                lineTo(cx-dp(22),cy+dp(21))
-                quadTo(cx-dp(31),cy+dp(21),cx-dp(28),cy+dp(15))
-                close()
+            val scale = dp(1).toFloat()
+            val cx = width / 2f
+            val top = (height - dp(58)) / 2f
+            // Symmetric hanger: round hook, short centered neck, and smooth shoulders.
+            val hook = Path().apply {
+                moveTo(cx, top + 24f * scale)
+                lineTo(cx, top + 20f * scale)
+                cubicTo(cx + 12f*scale, top + 18f*scale, cx + 11f*scale, top + 4f*scale, cx, top + 4f*scale)
+                cubicTo(cx - 12f*scale, top + 4f*scale, cx - 12f*scale, top + 17f*scale, cx - 6f*scale, top + 18f*scale)
             }
-            canvas.drawPath(path,paint)
+            canvas.drawPath(hook, paint)
+            val body = Path().apply {
+                moveTo(cx, top + 24f*scale)
+                cubicTo(cx - 5f*scale, top + 27f*scale, cx - 21f*scale, top + 37f*scale, cx - 33f*scale, top + 44f*scale)
+                cubicTo(cx - 40f*scale, top + 49f*scale, cx - 37f*scale, top + 54f*scale, cx - 29f*scale, top + 54f*scale)
+                lineTo(cx + 29f*scale, top + 54f*scale)
+                cubicTo(cx + 37f*scale, top + 54f*scale, cx + 40f*scale, top + 49f*scale, cx + 33f*scale, top + 44f*scale)
+                cubicTo(cx + 21f*scale, top + 37f*scale, cx + 5f*scale, top + 27f*scale, cx, top + 24f*scale)
+            }
+            canvas.drawPath(body, paint)
         }
     }
     private fun shape(color: Int, radius: Int = 18): GradientDrawable = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
