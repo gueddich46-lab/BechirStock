@@ -4,6 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
@@ -20,11 +26,30 @@ class MainActivity : Activity() {
     private lateinit var root: LinearLayout
     private val soft = Color.rgb(31, 25, 49)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
+    private fun hanger(): View = object : View(this) {
+        private val paint = Paint(3).apply { color = accent; style = Paint.Style.STROKE; strokeWidth = dp(2).toFloat(); strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val cx=width/2f; val cy=height/2f
+            val path=Path().apply {
+                moveTo(cx-dp(3),cy-dp(9))
+                cubicTo(cx-dp(10),cy-dp(20),cx+dp(9),cy-dp(23),cx+dp(7),cy-dp(11))
+                cubicTo(cx+dp(6),cy-dp(6),cx+dp(1),cy-dp(6),cx,cy-dp(3))
+                lineTo(cx+dp(28),cy+dp(15))
+                quadTo(cx+dp(31),cy+dp(21),cx+dp(22),cy+dp(21))
+                lineTo(cx-dp(22),cy+dp(21))
+                quadTo(cx-dp(31),cy+dp(21),cx-dp(28),cy+dp(15))
+                close()
+            }
+            canvas.drawPath(path,paint)
+        }
+    }
     private fun shape(color: Int, radius: Int = 18): GradientDrawable = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun card(title: String, value: String, color: Int = Color.WHITE): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = shape(soft)
+            minimumHeight = dp(103)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             addView(txt(title, 13f, Color.rgb(197, 186, 215)))
             addView(txt(value, 20f, color))
@@ -41,7 +66,12 @@ class MainActivity : Activity() {
     private fun txt(s: String, size: Float = 17f, color: Int = Color.WHITE): TextView =
         TextView(this).apply { text = s; textSize = size; setTextColor(color); gravity = Gravity.RIGHT; setPadding(14, 14, 14, 14) }
     private fun button(s: String, action: () -> Unit): Button =
-        Button(this).apply { text = s; setTextColor(Color.WHITE); setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent)); setOnClickListener { action() } }
+        Button(this).apply {
+            text=s; textSize=15f; isAllCaps=false; setTextColor(Color.WHITE)
+            background=shape(accent, 15)
+            setPadding(dp(12),dp(8),dp(12),dp(8))
+            setOnClickListener { action() }
+        }
     private fun field(hintText: String, number: Boolean = false): EditText =
         EditText(this).apply { hint = hintText; setHintTextColor(Color.LTGRAY); setTextColor(Color.WHITE); setSingleLine(true); setPadding(16, 15, 16, 15); if(number) inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
     private fun items(): JSONArray = try { JSONArray(data.getString("items", "[]")) } catch (_: Exception) { JSONArray() }
@@ -64,11 +94,11 @@ class MainActivity : Activity() {
             background = shape(Color.rgb(24, 19, 39), 20)
             setPadding(dp(5), dp(5), dp(5), dp(5))
         }
-        listOf("⌂\nالرئيسية", "▣\nالمخزون", "🛒\nالمبيعات", "▥\nالتقارير").forEachIndexed { index, text ->
+        listOf("⌂\nالرئيسية", "▣\nالمخزون", "▤\nالمبيعات", "▥\nالتقارير").forEachIndexed { index, text ->
             val item = TextView(this).apply {
                 this.text=text; textSize=12f; gravity=Gravity.CENTER; setTextColor(if ((index==0 && title.contains("STOCK")) || title.contains(text.substringAfter("\n"))) accent else Color.WHITE)
                 setPadding(0,dp(8),0,dp(8))
-                setOnClickListener { when(index) { 0->home(); 1->inventory(); 2->sales(); else->sales() } }
+                setOnClickListener { when(index) { 0->home(); 1->inventory(); 2->sales(); else->reports() } }
             }
             nav.addView(item,LinearLayout.LayoutParams(0,dp(59),1f))
         }
@@ -79,14 +109,14 @@ class MainActivity : Activity() {
     private fun menu() {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val purchase = button("🛒  شراء جديد") { addPurchase() }
-        val sell = button("＋  بيع قطعة") { inventory() }
+        val sell = button("＋  بيع قطعة") { sellScreen() }
         row.addView(purchase, LinearLayout.LayoutParams(0,dp(55),1f).apply { marginEnd=dp(8) })
         row.addView(sell,LinearLayout.LayoutParams(0,dp(55),1f))
         root.addView(row)
     }
     private fun home() {
         page("BECHIR STOCK")
-        root.addView(txt("♧", 38f, accent).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
+        root.addView(hanger(), LinearLayout.LayoutParams(-1,dp(67)))
         root.addView(txt("BECHIR STOCK", 23f).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
         root.addView(txt("بشير ستوك", 19f).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
         root.addView(txt("إدارة تجارة الفريب الخاصة بي", 14f,Color.rgb(197,186,215)).apply { gravity=Gravity.CENTER })
@@ -102,7 +132,7 @@ class MainActivity : Activity() {
         root.addView(txt("ملخص تجارتك", 16f, accent))
         rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت", "المبيعات" to "$sold قطعة",true)
         rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
-        rowCards("المشتريات المتبقية" to "${fmt.format(cost)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
+        rowCards("قيمة المشتريات" to "${fmt.format(cost + (0.0))} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
         root.addView(txt("جميع بياناتك محفوظة محليًا على هذا الهاتف.",13f,Color.LTGRAY))
     }
@@ -164,6 +194,40 @@ class MainActivity : Activity() {
                 item.put("sold", item.optInt("sold") + 1)
                 save(arr); inventory()
             }.show()
+    }
+
+    private fun sellScreen() {
+        page("تسجيل بيع قطعة")
+        val arr=items()
+        var available=0
+        for(i in 0 until arr.length()) {
+            val item=arr.getJSONObject(i)
+            if(item.optInt("quantity") > item.optInt("sold")) {
+                available++
+                val line=card(item.optString("name"),"المتبقي: ${item.optInt("quantity")-item.optInt("sold")} | سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت")
+                line.setOnClickListener { sell(i) }
+                root.addView(line,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(9) })
+            }
+        }
+        if(available==0) root.addView(txt("لا توجد قطع متاحة للبيع. أضف مشتريات أولًا."))
+    }
+    private fun reports() {
+        page("التقارير")
+        val arr=items()
+        var stock=0; var sold=0; var cost=0.0; var revenue=0.0; var profit=0.0
+        for(i in 0 until arr.length()) {
+            val item=arr.getJSONObject(i)
+            val qty=item.optInt("quantity"); val done=item.optInt("sold")
+            stock+=qty-done; sold+=done
+            cost+=(qty-done)*item.optDouble("cost")
+            revenue+=done*item.optDouble("sale")
+            profit+=done*(item.optDouble("sale")-item.optDouble("cost"))
+        }
+        root.addView(txt("ملخص الأداء",19f,accent))
+        rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت","إجمالي المبيعات" to "${fmt.format(revenue)} د.ت",true)
+        rowCards("القطع المباعة" to "$sold","المخزون المتبقي" to "$stock")
+        root.addView(card("قيمة المخزون بالتكلفة","${fmt.format(cost)} د.ت"))
+        root.addView(txt("البيانات المعروضة إجمالية منذ بدء الاستخدام. الرسوم البيانية والتصدير قيد التطوير.",13f,Color.LTGRAY))
     }
     private fun sales() {
         page("المبيعات والأرباح")
