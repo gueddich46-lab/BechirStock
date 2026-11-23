@@ -158,7 +158,7 @@ class MainActivity : Activity() {
         val sell = button("＋  بيع قطعة") { sellScreen() }
         row.addView(purchase, LinearLayout.LayoutParams(0,dp(55),1f).apply { marginEnd=dp(8) })
         row.addView(sell,LinearLayout.LayoutParams(0,dp(55),1f))
-        root.addView(row)
+        root.addView(row,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(14) })
     }
     private fun home() {
         page("BECHIR STOCK")
@@ -181,7 +181,15 @@ class MainActivity : Activity() {
         rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
         rowCards("الربح المتوقع للمخزون" to "${fmt.format(expectedProfit)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
-        root.addView(button("💾 النسخ الاحتياطي واستعادة البيانات") { backupScreen() })
+        val backupCard=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL
+            background=shape(soft,18)
+            setPadding(dp(12),dp(10),dp(12),dp(12))
+        }
+        backupCard.addView(txt("حماية بيانات تجارتك",16f,accent))
+        backupCard.addView(txt("احفظ المخزون والمبيعات والصور في ملف واحد.",13f,Color.LTGRAY))
+        backupCard.addView(button("💾 النسخ الاحتياطي والاستعادة") { backupScreen() },LinearLayout.LayoutParams(-1,dp(52)))
+        root.addView(backupCard,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
         root.addView(txt("جميع بياناتك محفوظة محليًا على هذا الهاتف.",13f,Color.LTGRAY))
     }
     private fun addPurchase() {
