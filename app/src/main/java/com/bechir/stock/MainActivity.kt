@@ -103,6 +103,21 @@ class MainActivity : Activity() {
         EditText(this).apply { hint = hintText; setHintTextColor(Color.LTGRAY); setTextColor(Color.WHITE); setSingleLine(true); setPadding(16, 15, 16, 15); if(number) inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
     private fun items(): JSONArray = try { JSONArray(data.getString("items", "[]")) } catch (_: Exception) { JSONArray() }
     private fun save(items: JSONArray) { data.edit().putString("items", items.toString()).apply() }
+    private fun saleRecords(): JSONArray = try { JSONArray(data.getString("sale_records","[]")) } catch (_:Exception) { JSONArray() }
+    private fun saveSales(records: JSONArray) { data.edit().putString("sale_records",records.toString()).apply() }
+    private fun revenueFor(item: JSONObject): Double {
+        val records=item.optJSONArray("sales")
+        if(records==null) return item.optInt("sold")*item.optDouble("sale")
+        var total=0.0
+        for(i in 0 until records.length()) total+=records.getJSONObject(i).optDouble("price")
+        return total
+    }
+    private fun totalRevenue(): Double {
+        val arr=items()
+        var sum=0.0
+        for(i in 0 until arr.length()) sum+=revenueFor(arr.getJSONObject(i))
+        return sum
+    }
     private fun amount(s: String): Double = s.trim().replace(",", ".").toDoubleOrNull() ?: 0.0
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); home() }
     private fun page(title: String) {
@@ -155,7 +170,7 @@ class MainActivity : Activity() {
             val unitCost = it.optDouble("cost", 0.0); val sale = it.optDouble("sale", 0.0)
             stock += quantity - soldQty; sold += soldQty; cost += (quantity - soldQty) * unitCost
             expectedProfit += (quantity - soldQty) * (sale - unitCost)
-            revenue += soldQty * sale; profit += soldQty * (sale - unitCost)
+            revenue += revenueFor(it); profit += revenueFor(it) - soldQty*unitCost
         }
         root.addView(txt("ملخص تجارتك", 16f, accent))
         rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت", "المبيعات" to "$sold قطعة",true)
@@ -640,16 +655,65 @@ class MainActivity : Activity() {
         }
     }
     private fun sell(index: Int) {
-        val arr = items(); val item = arr.getJSONObject(index)
-        val remaining = item.optInt("quantity") - item.optInt("sold")
-        if (remaining <= 0) { inventory(); return }
-        AlertDialog.Builder(this).setTitle("تأكيد البيع")
-            .setMessage("تسجيل بيع قطعة واحدة من ${item.optString("name")} بسعر ${fmt.format(item.optDouble("sale"))} د.ت؟")
-            .setNegativeButton("إلغاء", null)
-            .setPositiveButton("تأكيد") { _, _ ->
-                item.put("sold", item.optInt("sold") + 1)
-                save(arr); inventory()
-            }.show()
+        val arr=items()
+        val item=arr.getJSONObject(index)
+        val remaining=item.optInt("quantity")-item.optInt("sold")
+        if(remaining<=0) { inventory();return }
+        val form=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL
+            setPadding(dp(20),dp(8),dp(20),0)
+        }
+        form.addView(txt("المنتج: ${item.optString("name")}",17f,Color.DKGRAY))
+        form.addView(txt("تكلفة القطعة: ${fmt.format(item.optDouble("cost"))} د.ت",15f,Color.DKGRAY))
+        val actualPrice=EditText(this).apply {
+            inputType=android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(item.optDouble("sale").toString())
+            hint="سعر البيع الفعلي بالدينار"
+            selectAll()
+        }
+        form.addView(actualPrice)
+        val result=txt("الربح المتوقع: ${fmt.format(item.optDouble("sale")-item.optDouble("cost"))} د.ت",16f,Color.DKGRAY)
+        form.addView(result)
+        actualPrice.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {
+                val value=s.toString().replace(",",".").toDoubleOrNull()
+                result.text=if(value==null) "أدخل سعرًا صحيحًا" else "الربح الفعلي: ${fmt.format(value-item.optDouble("cost"))} د.ت"
+            }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        })
+        val dialog=AlertDialog.Builder(this).setTitle("تسجيل بيع قطعة")
+            .setView(form).setNegativeButton("إلغاء",null)
+            .setPositiveButton("تأكيد البيع",null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val price=actualPrice.text.toString().trim().replace(",",".").toDoubleOrNull()
+                if(price==null || !price.isFinite() || price<0) {
+                    actualPrice.error="أدخل سعر بيع صحيحًا"
+                } else {
+                    val fresh=items()
+                    val current=fresh.getJSONObject(index)
+                    if(current.optInt("sold")>=current.optInt("quantity")) {
+                        Toast.makeText(this,"نفدت الكمية",Toast.LENGTH_LONG).show()
+                        dialog.dismiss()
+                        inventory()
+                    } else {
+                        val date=java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date())
+                        val sales=current.optJSONArray("sales") ?: JSONArray().also { existing ->
+                            // Preserve historical sales recorded by earlier versions.
+                            repeat(current.optInt("sold")) { existing.put(JSONObject().put("price",current.optDouble("sale")).put("date","قبل التحديث")) }
+                        }
+                        sales.put(JSONObject().put("price",price).put("date",date))
+                        current.put("sales",sales)
+                        current.put("sold",current.optInt("sold")+1)
+                        save(fresh)
+                        dialog.dismiss()
+                        inventory()
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun sellScreen() {
@@ -676,8 +740,8 @@ class MainActivity : Activity() {
             val qty=item.optInt("quantity"); val done=item.optInt("sold")
             stock+=qty-done; sold+=done
             cost+=(qty-done)*item.optDouble("cost")
-            revenue+=done*item.optDouble("sale")
-            profit+=done*(item.optDouble("sale")-item.optDouble("cost"))
+            revenue+=revenueFor(item)
+            profit+=revenueFor(item)-done*item.optDouble("cost")
         }
         root.addView(txt("ملخص الأداء",19f,accent))
         rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت","إجمالي المبيعات" to "${fmt.format(revenue)} د.ت",true)
@@ -687,19 +751,31 @@ class MainActivity : Activity() {
     }
     private fun sales() {
         page("المبيعات والأرباح")
-        val arr = items()
-        var total = 0.0; var profit = 0.0; var count = 0
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i); val sold = item.optInt("sold")
-            if (sold > 0) {
-                count += sold
-                total += sold * item.optDouble("sale")
-                profit += sold * (item.optDouble("sale") - item.optDouble("cost"))
-                root.addView(txt("${item.optString("name")}: $sold قطعة | ${fmt.format(sold * item.optDouble("sale"))} د.ت"))
+        val arr=items()
+        var revenue=0.0; var profit=0.0; var count=0
+        for(i in 0 until arr.length()) {
+            val item=arr.getJSONObject(i)
+            val sold=item.optInt("sold")
+            if(sold==0) continue
+            val earned=revenueFor(item)
+            val itemProfit=earned-sold*item.optDouble("cost")
+            count+=sold;revenue+=earned;profit+=itemProfit
+            val panelView=LinearLayout(this).apply {
+                orientation=LinearLayout.VERTICAL
+                background=shape(soft)
+                setPadding(dp(12),dp(10),dp(12),dp(10))
             }
+            panelView.addView(txt(item.optString("name")+" — $sold قطعة",18f))
+            panelView.addView(txt("المبيعات: ${fmt.format(earned)} د.ت  |  الربح: ${fmt.format(itemProfit)} د.ت",15f,Color.rgb(103,240,157)))
+            val history=item.optJSONArray("sales")
+            if(history!=null) for(j in history.length()-1 downTo 0) {
+                val record=history.optJSONObject(j) ?: continue
+                panelView.addView(txt("${record.optString("date")}  •  ${fmt.format(record.optDouble("price"))} د.ت",13f,Color.LTGRAY))
+            }
+            root.addView(panelView,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
         }
-        root.addView(txt("المبيعات: $count قطعة / ${fmt.format(total)} د.ت", 20f))
-        root.addView(txt("الربح المحقق: ${fmt.format(profit)} د.ت", 21f, Color.rgb(103,240,157)))
-        root.addView(button("رجوع") { home() })
+        rowCards("إجمالي المبيعات" to "${fmt.format(revenue)} د.ت","الربح المحقق" to "${fmt.format(profit)} د.ت",true)
+        root.addView(txt("القطع المباعة: $count",17f))
+        if(count==0) root.addView(txt("لا توجد مبيعات مسجلة بعد."))
     }
 }
