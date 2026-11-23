@@ -1,6 +1,8 @@
 package com.bechir.stock
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.app.AlertDialog
 import android.os.Bundle
 import android.graphics.Color
@@ -24,6 +26,8 @@ class MainActivity : Activity() {
     private val accent = Color.rgb(173, 92, 245)
     private val data get() = getSharedPreferences("stock_data", MODE_PRIVATE)
     private lateinit var root: LinearLayout
+    private var pendingPhoto: Uri? = null
+    private var photoPreview: ImageView? = null
     private val soft = Color.rgb(31, 25, 49)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private fun hanger(): View = object : View(this) {
@@ -42,8 +46,8 @@ class MainActivity : Activity() {
             // Symmetric hanger: round hook, short centered neck, and smooth shoulders.
             val hook = Path().apply {
                 moveTo(cx, top + 24f * scale)
-                lineTo(cx, top + 20f * scale)
-                cubicTo(cx + 12f*scale, top + 18f*scale, cx + 11f*scale, top + 4f*scale, cx, top + 4f*scale)
+                lineTo(cx, top + 19f * scale)
+                cubicTo(cx + 12f*scale, top + 17f*scale, cx + 11f*scale, top + 4f*scale, cx, top + 4f*scale)
                 cubicTo(cx - 12f*scale, top + 4f*scale, cx - 12f*scale, top + 17f*scale, cx - 6f*scale, top + 18f*scale)
             }
             canvas.drawPath(hook, paint)
@@ -152,6 +156,8 @@ class MainActivity : Activity() {
     }
     private fun addPurchase() {
         page("إضافة شراء جديد")
+        pendingPhoto = null
+        photoPreview = null
         val options = arrayOf("بالقطعة", "بالبالة / الكيلو")
         val mode = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options) }
         root.addView(mode)
@@ -162,6 +168,20 @@ class MainActivity : Activity() {
         val expenses = field("مصاريف إضافية (نقل...) بالدينار", true)
         val sale = field("سعر بيع القطعة بالدينار", true)
         listOf(name, category, quantity, cost, expenses, sale).forEach { root.addView(it) }
+        root.addView(button("📷  اختيار صورة المنتج") {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "image/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }
+            startActivityForResult(intent, 101)
+        })
+        photoPreview = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            visibility = View.GONE
+        }
+        root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(170)))
         val preview = txt("التكلفة لكل قطعة: —", 18f, Color.rgb(103,240,157))
         root.addView(preview)
         root.addView(button("احسب تكلفة القطعة") {
@@ -178,7 +198,8 @@ class MainActivity : Activity() {
                 val arr = items()
                 arr.put(JSONObject().put("name", name.text.toString()).put("category", category.text.toString())
                     .put("quantity", qty).put("sold", 0).put("cost", (price + extra) / qty)
-                    .put("sale", salePrice).put("mode", options[mode.selectedItemPosition]))
+                    .put("sale", salePrice).put("mode", options[mode.selectedItemPosition])
+                    .put("photo", pendingPhoto?.toString() ?: ""))
                 save(arr); home()
             }
         })
@@ -186,16 +207,47 @@ class MainActivity : Activity() {
     }
     private fun inventory() {
         page("المخزون")
+        root.addView(button("＋  إضافة قطعة جديدة") { addPurchase() })
         val arr = items()
-        if (arr.length() == 0) root.addView(txt("لا توجد بضاعة مسجلة بعد."))
+        if (arr.length() == 0) root.addView(txt("لا توجد بضاعة مسجلة بعد. أضف أول قطعة لعرضها هنا."))
         for (i in 0 until arr.length()) {
             val item = arr.getJSONObject(i)
             val remaining = item.optInt("quantity") - item.optInt("sold")
-            root.addView(txt("${item.optString("name")}  |  ${item.optString("category")}\nالمتبقي: $remaining / ${item.optInt("quantity")}\nتكلفة القطعة: ${fmt.format(item.optDouble("cost"))} د.ت\nسعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت", 17f))
-            if (remaining > 0) root.addView(button("تسجيل بيع قطعة: ${item.optString("name")}") { sell(i) })
-            root.addView(View(this).apply { setBackgroundColor(panel); layoutParams = LinearLayout.LayoutParams(-1, 2) })
+            val product = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = shape(soft, 18)
+                setPadding(dp(12),dp(12),dp(12),dp(12))
+            }
+            val photo = item.optString("photo")
+            if (photo.isNotBlank()) {
+                val image = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    background = shape(Color.WHITE,12)
+                    try { setImageURI(Uri.parse(photo)) } catch (_: Exception) { visibility=View.GONE }
+                }
+                product.addView(image, LinearLayout.LayoutParams(-1,dp(180)))
+            }
+            product.addView(txt(item.optString("name"),20f))
+            product.addView(txt(item.optString("category")+"  •  "+if(remaining>0) "متوفر" else "نفدت الكمية",14f,accent))
+            product.addView(txt("المتبقي: $remaining من ${item.optInt("quantity")}  |  التكلفة: ${fmt.format(item.optDouble("cost"))} د.ت",14f,Color.LTGRAY))
+            product.addView(txt("سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت",17f,Color.rgb(103,240,157)))
+            if (remaining > 0) product.addView(button("تسجيل بيع قطعة") { sell(i) })
+            root.addView(product, LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
         }
-        root.addView(button("رجوع") { home() })
+    }
+    @Deprecated("Legacy image picker result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 101 && resultCode == RESULT_OK && data?.data != null) {
+            val uri = data.data!!
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                pendingPhoto = uri
+                photoPreview?.apply { setImageURI(uri); visibility = View.VISIBLE }
+            } catch (_: Exception) {
+                Toast.makeText(this, "تعذر حفظ إذن الوصول للصورة، حاول صورة أخرى", Toast.LENGTH_LONG).show()
+            }
+        }
     }
     private fun sell(index: Int) {
         val arr = items(); val item = arr.getJSONObject(index)
