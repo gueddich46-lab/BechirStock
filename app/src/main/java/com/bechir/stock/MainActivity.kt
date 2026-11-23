@@ -290,6 +290,57 @@ class MainActivity : Activity() {
         })
         root.addView(button("رجوع") { inventory() })
     }
+
+    // Removes only very small detached mask fragments. Large details (laces, logos) are retained.
+    private fun cleanCutout(source: Bitmap): Bitmap {
+        val w=source.width; val h=source.height
+        val pixels=IntArray(w*h)
+        source.getPixels(pixels,0,w,0,0,w,h)
+        val seen=BooleanArray(pixels.size)
+        val queue=IntArray(pixels.size)
+        val minIsland=maxOf(8,(pixels.size*0.00012).toInt())
+        for (start in pixels.indices) {
+            if(seen[start] || Color.alpha(pixels[start]) < 35) continue
+            var head=0; var tail=1
+            queue[0]=start; seen[start]=true
+            while(head<tail) {
+                val p=queue[head++]; val x=p%w; val y=p/w
+                if(x>0) { val n=p-1; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
+                if(x<w-1) { val n=p+1; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
+                if(y>0) { val n=p-w; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
+                if(y<h-1) { val n=p+w; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
+            }
+            if(tail<minIsland) for(i in 0 until tail) pixels[queue[i]]=Color.TRANSPARENT
+        }
+        val result=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
+        result.setPixels(pixels,0,w,0,0,w,h)
+        return result
+    }
+    private fun onWhiteCanvas(source: Bitmap): Bitmap {
+        val w=source.width; val h=source.height
+        val pixels=IntArray(w*h)
+        source.getPixels(pixels,0,w,0,0,w,h)
+        var left=w; var top=h; var right=-1; var bottom=-1
+        for(y in 0 until h) for(x in 0 until w) {
+            if(Color.alpha(pixels[y*w+x])>24) {
+                if(x<left) left=x
+                if(x>right) right=x
+                if(y<top) top=y
+                if(y>bottom) bottom=y
+            }
+        }
+        if(right<left || bottom<top) throw IllegalStateException("لم يتم العثور على المنتج")
+        val margin=0.07f
+        val out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
+        val canvas=Canvas(out)
+        canvas.drawColor(Color.WHITE)
+        val bw=(right-left+1).toFloat(); val bh=(bottom-top+1).toFloat()
+        val scale=minOf(w*(1f-2*margin)/bw,h*(1f-2*margin)/bh)
+        val dstW=bw*scale; val dstH=bh*scale
+        val dest=RectF((w-dstW)/2f,(h-dstH)/2f,(w+dstW)/2f,(h+dstH)/2f)
+        canvas.drawBitmap(source,android.graphics.Rect(left,top,right+1,bottom+1),dest,Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        return out
+    }
     private fun removeBackground() {
         val source = pendingPhoto
         if (source == null) {
@@ -309,15 +360,12 @@ class MainActivity : Activity() {
                 .addOnSuccessListener { result ->
                     try {
                         val foreground = result.foregroundBitmap ?: throw IllegalStateException("لم يُعثر على المنتج")
-                        val output = Bitmap.createBitmap(foreground.width,foreground.height,Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(output)
-                        canvas.drawColor(Color.WHITE)
-                        canvas.drawBitmap(foreground,0f,0f,null)
+                        val output = onWhiteCanvas(cleanCutout(foreground))
                         val file = java.io.File(filesDir,"stock_product_"+System.currentTimeMillis()+".png")
                         file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
                         processedPhoto = Uri.fromFile(file).toString()
                         photoPreview?.apply { setImageBitmap(output); visibility=View.VISIBLE }
-                        Toast.makeText(this,"تم تجهيز المعاينة. احفظ المشتريات لاعتماد الصورة.",Toast.LENGTH_LONG).show()
+                        Toast.makeText(this,"تم تنظيف البقايا الصغيرة وتوسيط المنتج. راجع الحواف قبل الحفظ.",Toast.LENGTH_LONG).show()
                     } catch(e:Exception) {
                         Toast.makeText(this,"لم تنجح إزالة الخلفية؛ الصورة الأصلية محفوظة.",Toast.LENGTH_LONG).show()
                     } finally { segmenter.close() }
