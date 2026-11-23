@@ -292,38 +292,117 @@ class MainActivity : Activity() {
     }
     private fun inventory() {
         page("المخزون")
-        root.addView(button("＋  إضافة قطعة جديدة") { addPurchase() })
-        val arr = items()
-        if (arr.length() == 0) root.addView(txt("لا توجد بضاعة مسجلة بعد. أضف أول قطعة لعرضها هنا."))
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i)
-            val remaining = item.optInt("quantity") - item.optInt("sold")
-            val product = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = shape(soft, 18)
-                setPadding(dp(12),dp(12),dp(12),dp(12))
-            }
-            val photo = item.optString("photo")
-            if (photo.isNotBlank()) {
-                val image = ImageView(this).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    background = shape(Color.WHITE,12)
-                    try { setImageURI(Uri.parse(photo)) } catch (_: Exception) { visibility=View.GONE }
-                }
-                product.addView(image, LinearLayout.LayoutParams(-1,dp(180)))
-            }
-            product.addView(txt(item.optString("name"),20f))
-            product.addView(txt(item.optString("category")+"  •  "+if(remaining>0) "متوفر" else "نفدت الكمية",14f,accent))
-            if (item.optString("size").isNotBlank()) product.addView(txt("القياس: "+item.optString("size"),16f))
-            product.addView(txt("المتبقي: $remaining من ${item.optInt("quantity")}  |  التكلفة: ${fmt.format(item.optDouble("cost"))} د.ت",14f,Color.LTGRAY))
-            product.addView(txt("سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت",17f,Color.rgb(103,240,157)))
-            if (remaining > 0) product.addView(txt("الربح المتوقع للقطعة: ${fmt.format(item.optDouble("sale") - item.optDouble("cost"))} د.ت",15f,accent))
-            product.addView(button("📷 تعديل صورة القطعة") { editPhoto(i) })
-            if (remaining > 0) product.addView(button("تسجيل بيع قطعة") { sell(i) })
-            root.addView(product, LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
+        root.addView(button("＋ إضافة قطعة جديدة") { addPurchase() })
+        val arr=items()
+        val search=field("ابحث بالاسم أو الماركة أو القياس").apply {
+            background=shape(soft,12)
+            setPadding(dp(12),dp(10),dp(12),dp(10))
         }
+        root.addView(search,LinearLayout.LayoutParams(-1,dp(54)).apply { topMargin=dp(12);bottomMargin=dp(10) })
+        val filters=arrayOf("الكل","المتوفر","المنتهي","تم بيع جزء منه")
+        val selector=Spinner(this).apply {
+            adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,filters)
+            background=shape(soft,12)
+        }
+        root.addView(selector,LinearLayout.LayoutParams(-1,dp(50)).apply { bottomMargin=dp(12) })
+        val results=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        root.addView(results)
+        fun refresh() {
+            results.removeAllViews()
+            val term=search.text.toString().trim()
+            var shown=0
+            for(i in 0 until arr.length()) {
+                val item=arr.getJSONObject(i)
+                val sold=item.optInt("sold")
+                val remaining=item.optInt("quantity")-sold
+                val searchable=listOf(item.optString("name"),item.optString("category"),item.optString("size")).joinToString(" ")
+                if(term.isNotEmpty() && !searchable.contains(term,ignoreCase=true)) continue
+                val matches=when(selector.selectedItemPosition) {
+                    1 -> remaining>0
+                    2 -> remaining<=0
+                    3 -> sold>0
+                    else -> true
+                }
+                if(!matches) continue
+                shown++
+                val index=i
+                val product=LinearLayout(this).apply {
+                    orientation=LinearLayout.VERTICAL
+                    background=shape(soft,18)
+                    setPadding(dp(12),dp(12),dp(12),dp(12))
+                }
+                val photo=item.optString("photo")
+                if(photo.isNotBlank()) {
+                    val image=ImageView(this).apply {
+                        scaleType=ImageView.ScaleType.CENTER_CROP
+                        background=shape(Color.WHITE,12)
+                        try { setImageURI(Uri.parse(photo)) } catch (_:Exception) { visibility=View.GONE }
+                    }
+                    product.addView(image,LinearLayout.LayoutParams(-1,dp(170)))
+                }
+                product.addView(txt(item.optString("name"),20f))
+                product.addView(txt(item.optString("category")+"  •  "+if(remaining>0) "متوفر" else "نفدت الكمية",14f,accent))
+                if(item.optString("size").isNotBlank()) product.addView(txt("القياس: "+item.optString("size"),15f))
+                product.addView(txt("المتبقي: $remaining من ${item.optInt("quantity")} | التكلفة: ${fmt.format(item.optDouble("cost"))} د.ت",14f,Color.LTGRAY))
+                product.addView(txt("سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت",17f,Color.rgb(103,240,157)))
+                product.addView(button("✎ تعديل بيانات القطعة") { editItem(index) })
+                product.addView(button("📷 تعديل صورة القطعة") { editPhoto(index) })
+                if(remaining>0) product.addView(button("تسجيل بيع قطعة") { sell(index) })
+                results.addView(product,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
+            }
+            if(shown==0) results.addView(txt(if(arr.length()==0) "لا توجد بضاعة مسجلة بعد." else "لا توجد نتائج مطابقة للبحث."))
+        }
+        search.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { refresh() }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        })
+        selector.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long) { refresh() }
+            override fun onNothingSelected(parent:android.widget.AdapterView<*>?) { refresh() }
+        }
+        refresh()
     }
 
+    private fun editItem(index:Int) {
+        val arr=items()
+        val item=arr.getJSONObject(index)
+        page("تعديل بيانات القطعة")
+        root.addView(txt("تعديل المنتج دون حذف سجل مبيعاته",15f,accent))
+        val name=field("اسم المنتج").apply { setText(item.optString("name")) }
+        val category=field("التصنيف / الماركة").apply { setText(item.optString("category")) }
+        val size=field("القياس").apply { setText(item.optString("size")) }
+        val quantity=field("العدد الإجمالي",true).apply { setText(item.optInt("quantity").toString()) }
+        val cost=field("تكلفة القطعة",true).apply { setText(item.optDouble("cost").toString()) }
+        val sale=field("سعر البيع المتوقع",true).apply { setText(item.optDouble("sale").toString()) }
+        listOf(name,category,size,quantity,cost,sale).forEach {
+            root.addView(it,LinearLayout.LayoutParams(-1,dp(56)).apply { bottomMargin=dp(8) })
+        }
+        root.addView(txt("عدد القطع المباعة: ${item.optInt("sold")} — لا يمكن خفض العدد الإجمالي عن المبيعات المسجلة.",14f,Color.LTGRAY))
+        root.addView(button("✓ حفظ التعديلات") {
+            val qty=quantity.text.toString().toIntOrNull()
+            val unitCost=cost.text.toString().replace(",",".").toDoubleOrNull()
+            val price=sale.text.toString().replace(",",".").toDoubleOrNull()
+            if(name.text.isBlank() || qty==null || qty<maxOf(1,item.optInt("sold")) ||
+                unitCost==null || !unitCost.isFinite() || unitCost<0 ||
+                price==null || !price.isFinite() || price<0) {
+                Toast.makeText(this,"تحقق من الاسم والكمية والأسعار؛ لا يمكن حذف مبيعات مسجلة",Toast.LENGTH_LONG).show()
+            } else {
+                val updated=items().getJSONObject(index)
+                updated.put("name",name.text.toString().trim())
+                updated.put("category",category.text.toString().trim())
+                updated.put("size",size.text.toString().trim())
+                updated.put("quantity",qty)
+                updated.put("cost",unitCost)
+                updated.put("sale",price)
+                val latest=items()
+                latest.put(index,updated)
+                save(latest)
+                inventory()
+            }
+        })
+        root.addView(button("رجوع دون حفظ") { inventory() })
+    }
 
     private fun editPhoto(index: Int) {
         val item = items().getJSONObject(index)
