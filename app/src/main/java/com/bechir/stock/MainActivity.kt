@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.view.MotionEvent
 import android.graphics.drawable.BitmapDrawable
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
@@ -35,6 +36,7 @@ class MainActivity : Activity() {
     private var pendingPhoto: Uri? = null
     private var processedPhoto: String? = null
     private var photoPreview: ImageView? = null
+    private var restoreCutout: Bitmap? = null
     private val soft = Color.rgb(31, 25, 49)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private fun hanger(): View = object : View(this) {
@@ -166,6 +168,7 @@ class MainActivity : Activity() {
         page("إضافة شراء جديد")
         pendingPhoto = null
         processedPhoto = null
+        restoreCutout = null
         photoPreview = null
         val options = arrayOf("بالقطعة", "بالبالة / الكيلو")
         val mode = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options) }
@@ -193,6 +196,8 @@ class MainActivity : Activity() {
         }
         root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(170)))
         root.addView(button("✨ إزالة الخلفية وجعلها بيضاء (تجريبي)") { removeBackground() })
+        root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
+        root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
         root.addView(button("↩ استعادة الصورة الأصلية") {
             processedPhoto = null
             pendingPhoto?.let { photoPreview?.setImageURI(it) }
@@ -370,6 +375,126 @@ class MainActivity : Activity() {
         canvas.drawBitmap(source,android.graphics.Rect(left,top,right+1,bottom+1),dest,Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         return out
     }
+
+    private fun manualCorrection() {
+        val edited = processedPhoto
+        if(edited.isNullOrBlank()) {
+            Toast.makeText(this,"نفّذ العزل التلقائي أولًا",Toast.LENGTH_LONG).show()
+            return
+        }
+        val current = try {
+            contentResolver.openInputStream(Uri.parse(edited))?.use { BitmapFactory.decodeStream(it) }
+        } catch (_:Exception) { null }
+        if(current==null) {
+            Toast.makeText(this,"تعذر فتح الصورة المعدلة",Toast.LENGTH_LONG).show()
+            return
+        }
+        val working = current.copy(Bitmap.Config.ARGB_8888,true)
+        val history = ArrayList<Bitmap>()
+        var restore = false
+        var radius = 14f
+        val drawing = object: View(this) {
+            private val brush=Paint(Paint.ANTI_ALIAS_FLAG).apply { style=Paint.Style.FILL }
+            private val rect=RectF()
+            private var lastX=-1f
+            private var lastY=-1f
+            override fun onDraw(c:Canvas) {
+                super.onDraw(c)
+                c.drawColor(Color.rgb(235,235,235))
+                val scale=minOf(width.toFloat()/working.width,height.toFloat()/working.height)
+                val dw=working.width*scale
+                val dh=working.height*scale
+                rect.set((width-dw)/2,(height-dh)/2,(width+dw)/2,(height+dh)/2)
+                c.drawBitmap(working,null,rect,Paint(Paint.FILTER_BITMAP_FLAG))
+            }
+            private fun applyBrush(x:Float,y:Float) {
+                if(!rect.contains(x,y)) return
+                val bx=(x-rect.left)*working.width/rect.width()
+                val by=(y-rect.top)*working.height/rect.height()
+                val r=radius*working.width/rect.width()
+                val canvas=Canvas(working)
+                val path=Path().apply { addCircle(bx,by,r,Path.Direction.CW) }
+                canvas.save()
+                canvas.clipPath(path)
+                if(restore && restoreCutout != null && restoreCutout!!.width==working.width && restoreCutout!!.height==working.height) {
+                    canvas.drawBitmap(restoreCutout!!,0f,0f,null)
+                } else {
+                    canvas.drawColor(Color.WHITE)
+                }
+                canvas.restore()
+                invalidate()
+            }
+            override fun onTouchEvent(event:MotionEvent):Boolean {
+                when(event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        if(history.size>=8) history.removeAt(0)
+                        history.add(working.copy(Bitmap.Config.ARGB_8888,false))
+                        lastX=event.x; lastY=event.y
+                        applyBrush(event.x,event.y)
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val x=event.x; val y=event.y
+                        val distance=kotlin.math.hypot(x-lastX,y-lastY)
+                        val steps=maxOf(1,(distance/5f).toInt())
+                        for(i in 1..steps) {
+                            val t=i.toFloat()/steps
+                            applyBrush(lastX+(x-lastX)*t,lastY+(y-lastY)*t)
+                        }
+                        lastX=x;lastY=y
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> return true
+                }
+                return true
+            }
+            fun undo() {
+                if(history.isEmpty()) return
+                val previous=history.removeAt(history.lastIndex)
+                Canvas(working).drawBitmap(previous,0f,0f,null)
+                previous.recycle()
+                invalidate()
+            }
+        }
+        val layout=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(10),dp(10),dp(10),dp(10)) }
+        layout.addView(txt("امسح البقايا بإصبعك. الاسترجاع متاح فقط بعد عزل جديد.",14f,Color.DKGRAY))
+        layout.addView(drawing,LinearLayout.LayoutParams(-1,dp(340)))
+        val modes=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
+        val eraseButton=button("ممحاة") { restore=false }
+        val restoreButton=button("استرجاع") {
+            if(restoreCutout==null) Toast.makeText(this,"أعد العزل لتفعيل الاسترجاع",Toast.LENGTH_SHORT).show()
+            else restore=true
+        }
+        modes.addView(eraseButton,LinearLayout.LayoutParams(0,dp(48),1f))
+        modes.addView(restoreButton,LinearLayout.LayoutParams(0,dp(48),1f))
+        layout.addView(modes)
+        val sizeLabel=txt("حجم الفرشاة",14f,Color.DKGRAY)
+        layout.addView(sizeLabel)
+        val slider=SeekBar(this).apply { max=70; progress=14; setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar:SeekBar?,progress:Int,fromUser:Boolean) { radius=(progress+3).toFloat() }
+            override fun onStartTrackingTouch(bar:SeekBar?) {}
+            override fun onStopTrackingTouch(bar:SeekBar?) {}
+        }) }
+        layout.addView(slider)
+        layout.addView(button("تراجع عن آخر تعديل") { drawing.undo() })
+        val dialog=AlertDialog.Builder(this).setTitle("تصحيح الصورة يدويًا").setView(layout)
+            .setNegativeButton("إلغاء",null)
+            .setPositiveButton("اعتماد التصحيح",null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                try {
+                    val file=java.io.File(filesDir,"stock_manual_"+System.currentTimeMillis()+".png")
+                    file.outputStream().use { working.compress(Bitmap.CompressFormat.PNG,100,it) }
+                    processedPhoto=Uri.fromFile(file).toString()
+                    photoPreview?.setImageBitmap(working)
+                    dialog.dismiss()
+                } catch (_:Exception) {
+                    Toast.makeText(this,"تعذر حفظ الصورة المصححة",Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        dialog.show()
+    }
     private fun removeBackground() {
         val source = pendingPhoto
         if (source == null) {
@@ -389,6 +514,7 @@ class MainActivity : Activity() {
                 .addOnSuccessListener { result ->
                     try {
                         val foreground = result.foregroundBitmap ?: throw IllegalStateException("لم يُعثر على المنتج")
+                        restoreCutout = onWhiteCanvas(foreground)
                         val output = onWhiteCanvas(cleanCutout(foreground))
                         val file = java.io.File(filesDir,"stock_product_"+System.currentTimeMillis()+".png")
                         file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
