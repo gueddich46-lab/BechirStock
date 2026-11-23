@@ -166,63 +166,114 @@ class MainActivity : Activity() {
     }
     private fun addPurchase() {
         page("إضافة شراء جديد")
-        pendingPhoto = null
-        processedPhoto = null
-        restoreCutout = null
-        photoPreview = null
-        val options = arrayOf("بالقطعة", "بالبالة / الكيلو")
-        val mode = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options) }
-        root.addView(mode)
-        val name = field("اسم المنتج أو البالة")
-        val category = field("التصنيف / الماركة")
-        val size = field("القياس (مثل 42 أو XL)")
-        val quantity = field("عدد القطع", true)
-        val cost = field("ثمن الشراء الإجمالي بالدينار", true)
-        val expenses = field("مصاريف إضافية (نقل...) بالدينار", true)
-        val sale = field("سعر بيع القطعة بالدينار", true)
-        listOf(name, category, size, quantity, cost, expenses, sale).forEach { root.addView(it) }
-        root.addView(button("📷  اختيار صورة المنتج") {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "image/*"
+        pendingPhoto=null
+        processedPhoto=null
+        restoreCutout=null
+        photoPreview=null
+
+        fun section(title:String): LinearLayout {
+            val panelView=LinearLayout(this).apply {
+                orientation=LinearLayout.VERTICAL
+                background=shape(soft,18)
+                setPadding(dp(12),dp(12),dp(12),dp(12))
+            }
+            panelView.addView(txt(title,17f,accent))
+            root.addView(panelView,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
+            return panelView
+        }
+        fun addField(group:LinearLayout,label:String,number:Boolean=false):EditText {
+            group.addView(txt(label,13f,Color.rgb(201,190,216)))
+            return field(label,number).apply {
+                textSize=16f
+                gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL
+                background=shape(Color.rgb(48,39,68),12)
+                setPadding(dp(12),dp(10),dp(12),dp(10))
+                group.addView(this,LinearLayout.LayoutParams(-1,dp(48)).apply { bottomMargin=dp(9) })
+            }
+        }
+        val info=section("تفاصيل البضاعة")
+        val options=arrayOf("بالقطعة","بالبالة / الكيلو")
+        info.addView(txt("طريقة الشراء",13f,Color.rgb(201,190,216)))
+        val mode=Spinner(this).apply {
+            adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,options)
+            background=shape(Color.rgb(48,39,68),12)
+            setPadding(dp(10),0,dp(10),0)
+        }
+        info.addView(mode,LinearLayout.LayoutParams(-1,dp(50)))
+        val name=addField(info,"اسم المنتج أو البالة")
+        val category=addField(info,"التصنيف / الماركة")
+        val size=addField(info,"القياس (مثل 42 أو XL)")
+
+        val prices=section("الكميات والأسعار")
+        val quantity=addField(prices,"عدد القطع",true)
+        val cost=addField(prices,"ثمن الشراء الإجمالي بالدينار",true)
+        val expenses=addField(prices,"مصاريف إضافية (نقل...) بالدينار",true)
+        val sale=addField(prices,"سعر بيع القطعة بالدينار",true)
+        val preview=txt("التكلفة لكل قطعة: —",17f,Color.rgb(103,240,157))
+        prices.addView(preview)
+        val potential=txt("الربح المتوقع لكل قطعة: —",16f,accent)
+        prices.addView(potential)
+        val recalc={
+            val qty=quantity.text.toString().toIntOrNull() ?: 0
+            val total=amount(cost.text.toString())+amount(expenses.text.toString())
+            if(qty>0 && cost.text.isNotBlank()) {
+                val unit=total/qty
+                preview.text="التكلفة لكل قطعة: ${fmt.format(unit)} د.ت"
+                potential.text="الربح المتوقع لكل قطعة: ${fmt.format(amount(sale.text.toString())-unit)} د.ت"
+            } else {
+                preview.text="التكلفة لكل قطعة: —"
+                potential.text="الربح المتوقع لكل قطعة: —"
+            }
+        }
+        val watcher=object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { recalc() }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        }
+        listOf(quantity,cost,expenses,sale).forEach { it.addTextChangedListener(watcher) }
+
+        val pictures=section("صورة المنتج")
+        pictures.addView(button("📷 اختيار صورة المنتج") {
+            val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type="image/*"
                 addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             }
-            startActivityForResult(intent, 101)
-        })
-        photoPreview = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            visibility = View.GONE
+            startActivityForResult(intent,101)
+        },LinearLayout.LayoutParams(-1,dp(50)))
+        photoPreview=ImageView(this).apply {
+            adjustViewBounds=true
+            scaleType=ImageView.ScaleType.FIT_CENTER
+            visibility=View.GONE
         }
-        root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(170)))
-        root.addView(button("✨ إزالة الخلفية وجعلها بيضاء (تجريبي)") { removeBackground() })
-        root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
-        root.addView(button("↩ استعادة الصورة الأصلية") {
-            processedPhoto = null
+        pictures.addView(photoPreview,LinearLayout.LayoutParams(-1,dp(190)))
+        pictures.addView(button("✨ إزالة الخلفية وجعلها بيضاء") { removeBackground() })
+        pictures.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
+        pictures.addView(button("↩ استعادة الصورة الأصلية") {
+            processedPhoto=null
             pendingPhoto?.let { photoPreview?.setImageURI(it) }
         })
-        val preview = txt("التكلفة لكل قطعة: —", 18f, Color.rgb(103,240,157))
-        root.addView(preview)
-        root.addView(button("احسب تكلفة القطعة") {
-            val qty = quantity.text.toString().toIntOrNull() ?: 0
-            preview.text = if (qty > 0) "التكلفة لكل قطعة: ${fmt.format((amount(cost.text.toString()) + amount(expenses.text.toString())) / qty)} د.ت" else "أدخل عدد قطع صحيحًا"
-        })
-        root.addView(button("حفظ المشتريات") {
-            val qty = quantity.text.toString().toIntOrNull() ?: 0
-            val price = amount(cost.text.toString()); val extra = amount(expenses.text.toString())
-            val salePrice = amount(sale.text.toString())
-            if (name.text.isBlank() || qty < 1 || price < 0 || extra < 0 || salePrice < 0 || cost.text.isBlank()) {
-                Toast.makeText(this, "تحقق من الاسم والعدد والأسعار", Toast.LENGTH_LONG).show()
+
+        root.addView(button("✓ حفظ المشتريات") {
+            val qty=quantity.text.toString().toIntOrNull() ?: 0
+            val price=amount(cost.text.toString())
+            val extra=amount(expenses.text.toString())
+            val salePrice=amount(sale.text.toString())
+            if(name.text.isBlank() || qty<1 || cost.text.isBlank() || price<0 || extra<0 || salePrice<0 ||
+                listOf(cost,expenses,sale).any { it.text.toString().isNotBlank() && it.text.toString().trim().replace(",",".").toDoubleOrNull()==null }) {
+                Toast.makeText(this,"تحقق من الاسم والعدد والأسعار",Toast.LENGTH_LONG).show()
             } else {
-                val arr = items()
-                arr.put(JSONObject().put("name", name.text.toString()).put("category", category.text.toString())
-                    .put("quantity", qty).put("sold", 0).put("cost", (price + extra) / qty)
-                    .put("sale", salePrice).put("size", size.text.toString().trim()).put("mode", options[mode.selectedItemPosition])
-                    .put("photo", processedPhoto ?: pendingPhoto?.toString() ?: ""))
-                save(arr); home()
+                val arr=items()
+                arr.put(JSONObject().put("name",name.text.toString()).put("category",category.text.toString())
+                    .put("quantity",qty).put("sold",0).put("cost",(price+extra)/qty)
+                    .put("sale",salePrice).put("size",size.text.toString().trim())
+                    .put("mode",options[mode.selectedItemPosition])
+                    .put("photo",processedPhoto ?: pendingPhoto?.toString() ?: ""))
+                save(arr)
+                home()
             }
-        })
-        root.addView(button("رجوع") { home() })
+        },LinearLayout.LayoutParams(-1,dp(56)).apply { bottomMargin=dp(10) })
+        root.addView(button("رجوع دون حفظ") { home() },LinearLayout.LayoutParams(-1,dp(48)))
     }
     private fun inventory() {
         page("المخزون")
