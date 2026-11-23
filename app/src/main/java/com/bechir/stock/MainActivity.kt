@@ -292,29 +292,58 @@ class MainActivity : Activity() {
     }
 
     // Removes only very small detached mask fragments. Large details (laces, logos) are retained.
+    // Keep the largest connected foreground region. This removes detached background flecks
+    // while leaving the main product intact; use the original when the mask is unreliable.
     private fun cleanCutout(source: Bitmap): Bitmap {
         val w=source.width; val h=source.height
         val pixels=IntArray(w*h)
         source.getPixels(pixels,0,w,0,0,w,h)
-        val seen=BooleanArray(pixels.size)
+        val visited=BooleanArray(pixels.size)
         val queue=IntArray(pixels.size)
-        val minIsland=maxOf(8,(pixels.size*0.00012).toInt())
-        for (start in pixels.indices) {
-            if(seen[start] || Color.alpha(pixels[start]) < 35) continue
+        var largestStart=-1
+        var largestSize=0
+        val component=IntArray(pixels.size)
+        for(start in pixels.indices) {
+            if(visited[start] || Color.alpha(pixels[start])<40) continue
             var head=0; var tail=1
-            queue[0]=start; seen[start]=true
+            queue[0]=start
+            visited[start]=true
             while(head<tail) {
                 val p=queue[head++]; val x=p%w; val y=p/w
-                if(x>0) { val n=p-1; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
-                if(x<w-1) { val n=p+1; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
-                if(y>0) { val n=p-w; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
-                if(y<h-1) { val n=p+w; if(!seen[n] && Color.alpha(pixels[n])>=35) {seen[n]=true;queue[tail++]=n} }
+                if(x>0) { val n=p-1; if(!visited[n] && Color.alpha(pixels[n])>=40) {visited[n]=true;queue[tail++]=n} }
+                if(x+1<w) { val n=p+1; if(!visited[n] && Color.alpha(pixels[n])>=40) {visited[n]=true;queue[tail++]=n} }
+                if(y>0) { val n=p-w; if(!visited[n] && Color.alpha(pixels[n])>=40) {visited[n]=true;queue[tail++]=n} }
+                if(y+1<h) { val n=p+w; if(!visited[n] && Color.alpha(pixels[n])>=40) {visited[n]=true;queue[tail++]=n} }
             }
-            if(tail<minIsland) for(i in 0 until tail) pixels[queue[i]]=Color.TRANSPARENT
+            if(tail>largestSize) {
+                largestSize=tail
+                largestStart=start
+            }
         }
-        val result=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
-        result.setPixels(pixels,0,w,0,0,w,h)
-        return result
+        if(largestStart<0 || largestSize<maxOf(100,pixels.size/1000)) return source
+        // Flood fill from the largest component, then retain its soft alpha fringe.
+        val keep=BooleanArray(pixels.size)
+        var head=0; var tail=1
+        queue[0]=largestStart
+        keep[largestStart]=true
+        while(head<tail) {
+            val p=queue[head++]; val x=p%w; val y=p/w
+            if(x>0) { val n=p-1; if(!keep[n] && Color.alpha(pixels[n])>=40) {keep[n]=true;queue[tail++]=n} }
+            if(x+1<w) { val n=p+1; if(!keep[n] && Color.alpha(pixels[n])>=40) {keep[n]=true;queue[tail++]=n} }
+            if(y>0) { val n=p-w; if(!keep[n] && Color.alpha(pixels[n])>=40) {keep[n]=true;queue[tail++]=n} }
+            if(y+1<h) { val n=p+w; if(!keep[n] && Color.alpha(pixels[n])>=40) {keep[n]=true;queue[tail++]=n} }
+        }
+        // A one-pixel fringe retains antialiasing at the boundary.
+        for(i in pixels.indices) {
+            if(keep[i]) continue
+            val x=i%w; val y=i/w
+            val adjacent=(x>0 && keep[i-1]) || (x+1<w && keep[i+1]) ||
+                (y>0 && keep[i-w]) || (y+1<h && keep[i+w])
+            if(!adjacent) pixels[i]=Color.TRANSPARENT
+        }
+        return Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels,0,w,0,0,w,h)
+        }
     }
     private fun onWhiteCanvas(source: Bitmap): Bitmap {
         val w=source.width; val h=source.height
@@ -365,7 +394,7 @@ class MainActivity : Activity() {
                         file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
                         processedPhoto = Uri.fromFile(file).toString()
                         photoPreview?.apply { setImageBitmap(output); visibility=View.VISIBLE }
-                        Toast.makeText(this,"تم تنظيف البقايا الصغيرة وتوسيط المنتج. راجع الحواف قبل الحفظ.",Toast.LENGTH_LONG).show()
+                        Toast.makeText(this,"تمت محاولة إزالة الأجزاء المنفصلة وتوسيط المنتج. راجع الأربطة والحواف قبل الحفظ.",Toast.LENGTH_LONG).show()
                     } catch(e:Exception) {
                         Toast.makeText(this,"لم تنجح إزالة الخلفية؛ الصورة الأصلية محفوظة.",Toast.LENGTH_LONG).show()
                     } finally { segmenter.close() }
