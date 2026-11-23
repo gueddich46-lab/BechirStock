@@ -197,7 +197,6 @@ class MainActivity : Activity() {
         root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(170)))
         root.addView(button("✨ إزالة الخلفية وجعلها بيضاء (تجريبي)") { removeBackground() })
         root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
-        root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
         root.addView(button("↩ استعادة الصورة الأصلية") {
             processedPhoto = null
             pendingPhoto?.let { photoPreview?.setImageURI(it) }
@@ -278,6 +277,7 @@ class MainActivity : Activity() {
         }
         root.addView(photoPreview,LinearLayout.LayoutParams(-1,dp(240)))
         root.addView(button("✨ إزالة الخلفية وجعلها بيضاء") { removeBackground() })
+        root.addView(button("🖌 تصحيح الحواف يدويًا") { manualCorrection() })
         root.addView(button("↩ استعادة الصورة الأصلية") {
             processedPhoto=null
             photoPreview?.setImageURI(Uri.parse(originalUri))
@@ -307,7 +307,6 @@ class MainActivity : Activity() {
         val queue=IntArray(pixels.size)
         var largestStart=-1
         var largestSize=0
-        val component=IntArray(pixels.size)
         for(start in pixels.indices) {
             if(visited[start] || Color.alpha(pixels[start])<40) continue
             var head=0; var tail=1
@@ -350,10 +349,10 @@ class MainActivity : Activity() {
             setPixels(pixels,0,w,0,0,w,h)
         }
     }
-    private fun onWhiteCanvas(source: Bitmap): Bitmap {
+    private fun onWhiteCanvas(source: Bitmap, framing: Bitmap = source): Bitmap {
         val w=source.width; val h=source.height
         val pixels=IntArray(w*h)
-        source.getPixels(pixels,0,w,0,0,w,h)
+        framing.getPixels(pixels,0,w,0,0,w,h)
         var left=w; var top=h; var right=-1; var bottom=-1
         for(y in 0 until h) for(x in 0 until w) {
             if(Color.alpha(pixels[y*w+x])>24) {
@@ -514,8 +513,9 @@ class MainActivity : Activity() {
                 .addOnSuccessListener { result ->
                     try {
                         val foreground = result.foregroundBitmap ?: throw IllegalStateException("لم يُعثر على المنتج")
-                        restoreCutout = onWhiteCanvas(foreground)
-                        val output = onWhiteCanvas(cleanCutout(foreground))
+                        val cleaned = cleanCutout(foreground)
+                        restoreCutout = onWhiteCanvas(foreground,cleaned)
+                        val output = onWhiteCanvas(cleaned)
                         val file = java.io.File(filesDir,"stock_product_"+System.currentTimeMillis()+".png")
                         file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
                         processedPhoto = Uri.fromFile(file).toString()
