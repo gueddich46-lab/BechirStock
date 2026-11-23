@@ -6,6 +6,12 @@ import android.net.Uri
 import android.app.AlertDialog
 import android.os.Bundle
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -27,6 +33,7 @@ class MainActivity : Activity() {
     private val data get() = getSharedPreferences("stock_data", MODE_PRIVATE)
     private lateinit var root: LinearLayout
     private var pendingPhoto: Uri? = null
+    private var processedPhoto: String? = null
     private var photoPreview: ImageView? = null
     private val soft = Color.rgb(31, 25, 49)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
@@ -157,17 +164,19 @@ class MainActivity : Activity() {
     private fun addPurchase() {
         page("إضافة شراء جديد")
         pendingPhoto = null
+        processedPhoto = null
         photoPreview = null
         val options = arrayOf("بالقطعة", "بالبالة / الكيلو")
         val mode = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options) }
         root.addView(mode)
         val name = field("اسم المنتج أو البالة")
         val category = field("التصنيف / الماركة")
+        val size = field("القياس (مثل 42 أو XL)")
         val quantity = field("عدد القطع", true)
         val cost = field("ثمن الشراء الإجمالي بالدينار", true)
         val expenses = field("مصاريف إضافية (نقل...) بالدينار", true)
         val sale = field("سعر بيع القطعة بالدينار", true)
-        listOf(name, category, quantity, cost, expenses, sale).forEach { root.addView(it) }
+        listOf(name, category, size, quantity, cost, expenses, sale).forEach { root.addView(it) }
         root.addView(button("📷  اختيار صورة المنتج") {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "image/*"
@@ -182,6 +191,11 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(170)))
+        root.addView(button("✨ إزالة الخلفية وجعلها بيضاء (تجريبي)") { removeBackground() })
+        root.addView(button("↩ استعادة الصورة الأصلية") {
+            processedPhoto = null
+            pendingPhoto?.let { photoPreview?.setImageURI(it) }
+        })
         val preview = txt("التكلفة لكل قطعة: —", 18f, Color.rgb(103,240,157))
         root.addView(preview)
         root.addView(button("احسب تكلفة القطعة") {
@@ -198,8 +212,8 @@ class MainActivity : Activity() {
                 val arr = items()
                 arr.put(JSONObject().put("name", name.text.toString()).put("category", category.text.toString())
                     .put("quantity", qty).put("sold", 0).put("cost", (price + extra) / qty)
-                    .put("sale", salePrice).put("mode", options[mode.selectedItemPosition])
-                    .put("photo", pendingPhoto?.toString() ?: ""))
+                    .put("sale", salePrice).put("size", size.text.toString().trim()).put("mode", options[mode.selectedItemPosition])
+                    .put("photo", processedPhoto ?: pendingPhoto?.toString() ?: ""))
                 save(arr); home()
             }
         })
@@ -229,10 +243,53 @@ class MainActivity : Activity() {
             }
             product.addView(txt(item.optString("name"),20f))
             product.addView(txt(item.optString("category")+"  •  "+if(remaining>0) "متوفر" else "نفدت الكمية",14f,accent))
+            if (item.optString("size").isNotBlank()) product.addView(txt("القياس: "+item.optString("size"),16f))
             product.addView(txt("المتبقي: $remaining من ${item.optInt("quantity")}  |  التكلفة: ${fmt.format(item.optDouble("cost"))} د.ت",14f,Color.LTGRAY))
             product.addView(txt("سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت",17f,Color.rgb(103,240,157)))
             if (remaining > 0) product.addView(button("تسجيل بيع قطعة") { sell(i) })
             root.addView(product, LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
+        }
+    }
+
+    private fun removeBackground() {
+        val source = pendingPhoto
+        if (source == null) {
+            Toast.makeText(this,"اختر صورة أولًا",Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this,"جارٍ عزل المنتج، قد يلزم تنزيل نموذج عند أول استعمال",Toast.LENGTH_LONG).show()
+        val options = SubjectSegmenterOptions.Builder().enableForegroundBitmap().build()
+        val segmenter = SubjectSegmentation.getClient(options)
+        try {
+            val original = contentResolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it) }
+                ?: throw IllegalStateException("تعذر فتح الصورة")
+            val maxDimension = maxOf(original.width,original.height)
+            val factor = minOf(1.0, 1280.0 / maxDimension)
+            val scaled = if(factor < 1.0) Bitmap.createScaledBitmap(original,(original.width*factor).toInt(),(original.height*factor).toInt(),true) else original
+            segmenter.process(InputImage.fromBitmap(scaled,0))
+                .addOnSuccessListener { result ->
+                    try {
+                        val foreground = result.foregroundBitmap ?: throw IllegalStateException("لم يُعثر على المنتج")
+                        val output = Bitmap.createBitmap(foreground.width,foreground.height,Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(output)
+                        canvas.drawColor(Color.WHITE)
+                        canvas.drawBitmap(foreground,0f,0f,null)
+                        val file = java.io.File(filesDir,"stock_product_"+System.currentTimeMillis()+".png")
+                        file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
+                        processedPhoto = Uri.fromFile(file).toString()
+                        photoPreview?.apply { setImageBitmap(output); visibility=View.VISIBLE }
+                        Toast.makeText(this,"تم تجهيز المعاينة. احفظ المشتريات لاعتماد الصورة.",Toast.LENGTH_LONG).show()
+                    } catch(e:Exception) {
+                        Toast.makeText(this,"لم تنجح إزالة الخلفية؛ الصورة الأصلية محفوظة.",Toast.LENGTH_LONG).show()
+                    } finally { segmenter.close() }
+                }
+                .addOnFailureListener {
+                    segmenter.close()
+                    Toast.makeText(this,"تعذرت المعالجة. تأكد من توفر Google Play services والنموذج، ثم أعد المحاولة.",Toast.LENGTH_LONG).show()
+                }
+        } catch(e:Exception) {
+            segmenter.close()
+            Toast.makeText(this,"تعذر فتح الصورة. اختر صورة أخرى.",Toast.LENGTH_LONG).show()
         }
     }
     @Deprecated("Legacy image picker result")
@@ -240,6 +297,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 101 && resultCode == RESULT_OK && data?.data != null) {
             val uri = data.data!!
+            processedPhoto = null
             try {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 pendingPhoto = uri
