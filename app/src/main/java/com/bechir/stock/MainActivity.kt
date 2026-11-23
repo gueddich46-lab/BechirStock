@@ -26,6 +26,10 @@ import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.DecimalFormat
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import java.io.ByteArrayOutputStream
 
 class MainActivity : Activity() {
     private val bg = Color.rgb(16, 12, 28)
@@ -177,6 +181,7 @@ class MainActivity : Activity() {
         rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
         rowCards("الربح المتوقع للمخزون" to "${fmt.format(expectedProfit)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
+        root.addView(button("💾 النسخ الاحتياطي واستعادة البيانات") { backupScreen() })
         root.addView(txt("جميع بياناتك محفوظة محليًا على هذا الهاتف.",13f,Color.LTGRAY))
     }
     private fun addPurchase() {
@@ -718,9 +723,151 @@ class MainActivity : Activity() {
             Toast.makeText(this,"تعذر فتح الصورة. اختر صورة أخرى.",Toast.LENGTH_LONG).show()
         }
     }
+    private fun backupScreen() {
+        page("النسخ الاحتياطي")
+        root.addView(txt("احفظ ملفًا واحدًا يحتوي على المخزون والمبيعات وصور المنتجات. احتفظ به في مكان آمن أو انقله لهاتفك الجديد.",16f))
+        root.addView(button("💾 إنشاء نسخة احتياطية ZIP") {
+            val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type="application/zip"
+                putExtra(Intent.EXTRA_TITLE,"BECHIR-STOCK-backup.zip")
+            }
+            startActivityForResult(intent,201)
+        })
+        root.addView(button("📂 استعادة نسخة احتياطية") {
+            val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type="application/zip"
+            }
+            startActivityForResult(intent,202)
+        })
+        root.addView(txt("تنبيه: الاستعادة تستبدل بيانات التطبيق الحالية بعد تأكيدك. يُفضّل إنشاء نسخة احتياطية أولًا.",14f,Color.LTGRAY))
+    }
+    private fun exportBackup(destination:Uri) {
+        try {
+            val entries=items()
+            val manifest=JSONObject().put("format","bechir-stock-v1")
+            val portable=JSONArray()
+            val imageBytes=ArrayList<Pair<String,ByteArray>>()
+            for(i in 0 until entries.length()) {
+                val item=JSONObject(entries.getJSONObject(i).toString())
+                val photo=item.optString("photo")
+                if(photo.isNotBlank()) {
+                    try {
+                        val bytes=contentResolver.openInputStream(Uri.parse(photo))?.use { stream ->
+                            val output=ByteArrayOutputStream()
+                            val buffer=ByteArray(8192)
+                            var total=0
+                            while(true) {
+                                val n=stream.read(buffer)
+                                if(n<0) break
+                                total+=n
+                                if(total>15_000_000) throw IllegalStateException("الصورة كبيرة جدًا")
+                                output.write(buffer,0,n)
+                            }
+                            output.toByteArray()
+                        }
+                        if(bytes!=null) {
+                            val path="images/product_$i"
+                            imageBytes.add(path to bytes)
+                            item.put("photo",path)
+                        } else item.put("photo","")
+                    } catch (_:Exception) { item.put("photo","") }
+                }
+                portable.put(item)
+            }
+            manifest.put("items",portable)
+            manifest.put("createdAt",System.currentTimeMillis())
+            contentResolver.openOutputStream(destination)?.use { stream ->
+                ZipOutputStream(stream).use { zip ->
+                    zip.putNextEntry(ZipEntry("data.json"))
+                    zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                    for((path,bytes) in imageBytes) {
+                        zip.putNextEntry(ZipEntry(path))
+                        zip.write(bytes)
+                        zip.closeEntry()
+                    }
+                }
+            } ?: throw IllegalStateException("تعذر فتح الملف")
+            Toast.makeText(this,"تم إنشاء النسخة الاحتياطية",Toast.LENGTH_LONG).show()
+        } catch (_:Exception) {
+            Toast.makeText(this,"تعذر حفظ النسخة الاحتياطية؛ تأكد من توفر المساحة",Toast.LENGTH_LONG).show()
+        }
+    }
+    private fun importBackup(source:Uri) {
+        try {
+            var json:String?=null
+            val images=HashMap<String,ByteArray>()
+            var cumulative=0L
+            contentResolver.openInputStream(source)?.use { input ->
+                ZipInputStream(input).use { zip ->
+                    var count=0
+                    while(true) {
+                        val entry=zip.nextEntry ?: break
+                        count++
+                        if(count>2000) throw IllegalStateException("ملف كبير")
+                        val name=entry.name
+                        if(name=="data.json" || Regex("images/product_[0-9]+").matches(name)) {
+                            val output=ByteArrayOutputStream()
+                            val buffer=ByteArray(8192)
+                            var perEntry=0
+                            while(true) {
+                                val n=zip.read(buffer)
+                                if(n<0) break
+                                perEntry+=n
+                                cumulative+=n
+                                if(perEntry>15_000_000 || cumulative>150_000_000) throw IllegalStateException("ملف كبير")
+                                output.write(buffer,0,n)
+                            }
+                            if(name=="data.json") json=output.toString("UTF-8")
+                            else images[name]=output.toByteArray()
+                        }
+                        zip.closeEntry()
+                    }
+                }
+            } ?: throw IllegalStateException("تعذر قراءة الملف")
+            val document=JSONObject(json ?: throw IllegalStateException("لا توجد بيانات"))
+            if(document.optString("format")!="bechir-stock-v1") throw IllegalStateException("صيغة غير معروفة")
+            val imported=document.getJSONArray("items")
+            if(imported.length()>2000) throw IllegalStateException("عدد كبير")
+            for(i in 0 until imported.length()) {
+                val item=imported.getJSONObject(i)
+                if(item.optString("name").isBlank() || item.optInt("quantity")<1 ||
+                    item.optInt("sold")<0 || item.optInt("sold")>item.optInt("quantity")) throw IllegalStateException("بيانات غير صحيحة")
+                val photo=item.optString("photo")
+                if(photo.isNotBlank() && !images.containsKey(photo)) throw IllegalStateException("صورة ناقصة")
+            }
+            AlertDialog.Builder(this).setTitle("تأكيد استعادة البيانات")
+                .setMessage("سيتم استبدال المخزون والمبيعات الموجودة حاليًا ببيانات النسخة الاحتياطية (${imported.length()} منتج). هل تريد المتابعة؟")
+                .setNegativeButton("إلغاء",null)
+                .setPositiveButton("استعادة") { _,_ ->
+                    try {
+                        for(i in 0 until imported.length()) {
+                            val item=imported.getJSONObject(i)
+                            val photo=item.optString("photo")
+                            if(photo.isNotBlank()) {
+                                val file=java.io.File(filesDir,"restored_"+System.currentTimeMillis()+"_$i.img")
+                                file.writeBytes(images[photo]!!)
+                                item.put("photo",Uri.fromFile(file).toString())
+                            }
+                        }
+                        save(imported)
+                        Toast.makeText(this,"تمت استعادة البيانات بنجاح",Toast.LENGTH_LONG).show()
+                        home()
+                    } catch (_:Exception) {
+                        Toast.makeText(this,"فشلت الاستعادة؛ لم يتم استبدال المخزون",Toast.LENGTH_LONG).show()
+                    }
+                }.show()
+        } catch (_:Exception) {
+            Toast.makeText(this,"النسخة غير صالحة أو كبيرة جدًا؛ لم تتغير بياناتك",Toast.LENGTH_LONG).show()
+        }
+    }
     @Deprecated("Legacy image picker result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if(requestCode==201 && resultCode==RESULT_OK && data?.data!=null) { exportBackup(data.data!!);return }
+        if(requestCode==202 && resultCode==RESULT_OK && data?.data!=null) { importBackup(data.data!!);return }
         if (requestCode == 101 && resultCode == RESULT_OK && data?.data != null) {
             val uri = data.data!!
             processedPhoto = null
