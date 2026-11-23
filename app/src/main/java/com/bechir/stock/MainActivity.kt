@@ -376,74 +376,100 @@ class MainActivity : Activity() {
     }
 
     private fun manualCorrection() {
-        val edited = processedPhoto
+        val edited=processedPhoto
         if(edited.isNullOrBlank()) {
             Toast.makeText(this,"نفّذ العزل التلقائي أولًا",Toast.LENGTH_LONG).show()
             return
         }
-        val current = try {
+        val current=try {
             contentResolver.openInputStream(Uri.parse(edited))?.use { BitmapFactory.decodeStream(it) }
         } catch (_:Exception) { null }
         if(current==null) {
             Toast.makeText(this,"تعذر فتح الصورة المعدلة",Toast.LENGTH_LONG).show()
             return
         }
-        val working = current.copy(Bitmap.Config.ARGB_8888,true)
-        val history = ArrayList<Bitmap>()
-        var restore = false
-        var radius = 14f
-        val drawing = object: View(this) {
-            private val brush=Paint(Paint.ANTI_ALIAS_FLAG).apply { style=Paint.Style.FILL }
+        val working=current.copy(Bitmap.Config.ARGB_8888,true)
+        val restoreSource=restoreCutout?.takeIf { it.width==working.width && it.height==working.height }
+        val history=ArrayList<Bitmap>()
+        var restore=false
+        var radius=12f
+        var zoom=1f
+        var panX=0f
+        var panY=0f
+        val drawing=object: View(this) {
             private val rect=RectF()
-            private var lastX=-1f
-            private var lastY=-1f
+            private var lastX=0f
+            private var lastY=0f
+            private var dragging=false
+            private var lastFocusX=0f
+            private var lastFocusY=0f
+            private fun imageRect(): RectF {
+                val scale=minOf(width.toFloat()/working.width,height.toFloat()/working.height)*zoom
+                val dw=working.width*scale; val dh=working.height*scale
+                rect.set((width-dw)/2f+panX,(height-dh)/2f+panY,(width+dw)/2f+panX,(height+dh)/2f+panY)
+                return rect
+            }
             override fun onDraw(c:Canvas) {
                 super.onDraw(c)
-                c.drawColor(Color.rgb(235,235,235))
-                val scale=minOf(width.toFloat()/working.width,height.toFloat()/working.height)
-                val dw=working.width*scale
-                val dh=working.height*scale
-                rect.set((width-dw)/2,(height-dh)/2,(width+dw)/2,(height+dh)/2)
-                c.drawBitmap(working,null,rect,Paint(Paint.FILTER_BITMAP_FLAG))
+                c.drawColor(Color.rgb(236,236,236))
+                c.drawBitmap(working,null,imageRect(),Paint(Paint.FILTER_BITMAP_FLAG))
             }
-            private fun applyBrush(x:Float,y:Float) {
-                if(!rect.contains(x,y)) return
-                val bx=(x-rect.left)*working.width/rect.width()
-                val by=(y-rect.top)*working.height/rect.height()
-                val r=radius*working.width/rect.width()
-                val canvas=Canvas(working)
-                val path=Path().apply { addCircle(bx,by,r,Path.Direction.CW) }
-                canvas.save()
-                canvas.clipPath(path)
-                if(restore && restoreCutout != null && restoreCutout!!.width==working.width && restoreCutout!!.height==working.height) {
-                    canvas.drawBitmap(restoreCutout!!,0f,0f,null)
-                } else {
-                    canvas.drawColor(Color.WHITE)
+            private fun paintAt(x:Float,y:Float) {
+                val area=imageRect()
+                if(!area.contains(x,y)) return
+                val bx=(x-area.left)*working.width/area.width()
+                val by=(y-area.top)*working.height/area.height()
+                val r=radius*working.width/area.width()
+                val left=maxOf(0,(bx-r-2).toInt())
+                val top=maxOf(0,(by-r-2).toInt())
+                val right=minOf(working.width-1,(bx+r+2).toInt())
+                val bottom=minOf(working.height-1,(by+r+2).toInt())
+                val source=if(restore) restoreSource else null
+                for(py in top..bottom) for(px in left..right) {
+                    val dx=px-bx; val dy=py-by
+                    if(dx*dx+dy*dy<=r*r) {
+                        if(restore) {
+                            if(source!=null) working.setPixel(px,py,source.getPixel(px,py))
+                        } else working.setPixel(px,py,Color.WHITE)
+                    }
                 }
-                canvas.restore()
                 invalidate()
             }
             override fun onTouchEvent(event:MotionEvent):Boolean {
+                if(event.pointerCount>=2) {
+                    val fx=(event.getX(0)+event.getX(1))/2f
+                    val fy=(event.getY(0)+event.getY(1))/2f
+                    if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN) {
+                        lastFocusX=fx; lastFocusY=fy
+                    } else if(event.actionMasked==MotionEvent.ACTION_MOVE) {
+                        panX+=fx-lastFocusX; panY+=fy-lastFocusY
+                        lastFocusX=fx;lastFocusY=fy
+                        invalidate()
+                    }
+                    dragging=false
+                    return true
+                }
                 when(event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        if(history.size>=8) history.removeAt(0)
+                        if(history.size>=8) history.removeAt(0).recycle()
                         history.add(working.copy(Bitmap.Config.ARGB_8888,false))
-                        lastX=event.x; lastY=event.y
-                        applyBrush(event.x,event.y)
+                        dragging=true
+                        lastX=event.x;lastY=event.y
+                        paintAt(lastX,lastY)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        val x=event.x; val y=event.y
-                        val distance=kotlin.math.hypot(x-lastX,y-lastY)
-                        val steps=maxOf(1,(distance/5f).toInt())
+                        if(!dragging) return true
+                        val x=event.x;val y=event.y
+                        val steps=maxOf(1,(kotlin.math.hypot(x-lastX,y-lastY)/3f).toInt())
                         for(i in 1..steps) {
                             val t=i.toFloat()/steps
-                            applyBrush(lastX+(x-lastX)*t,lastY+(y-lastY)*t)
+                            paintAt(lastX+(x-lastX)*t,lastY+(y-lastY)*t)
                         }
                         lastX=x;lastY=y
                         return true
                     }
-                    MotionEvent.ACTION_UP -> return true
+                    MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL -> { dragging=false;return true }
                 }
                 return true
             }
@@ -454,30 +480,43 @@ class MainActivity : Activity() {
                 previous.recycle()
                 invalidate()
             }
+            fun changeZoom(value:Float) { zoom=value;panX=0f;panY=0f;invalidate() }
         }
-        val layout=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(10),dp(10),dp(10),dp(10)) }
-        layout.addView(txt("امسح البقايا بإصبعك. الاسترجاع متاح فقط بعد عزل جديد.",14f,Color.DKGRAY))
-        layout.addView(drawing,LinearLayout.LayoutParams(-1,dp(340)))
+        val layout=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL
+            setPadding(dp(10),dp(10),dp(10),dp(10))
+        }
+        layout.addView(txt("كبّر الصورة، حرّكها بإصبعين، ثم صحّح الحواف بإصبع واحد.",13f,Color.DKGRAY))
+        layout.addView(drawing,LinearLayout.LayoutParams(-1,dp(320)))
+        layout.addView(txt("التكبير: 1× إلى 5×",13f,Color.DKGRAY))
+        layout.addView(SeekBar(this).apply {
+            max=40
+            progress=0
+            setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar:SeekBar?,value:Int,fromUser:Boolean) { drawing.changeZoom(1f+value/10f) }
+                override fun onStartTrackingTouch(bar:SeekBar?) {}
+                override fun onStopTrackingTouch(bar:SeekBar?) {}
+            })
+        })
         val modes=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
-        val eraseButton=button("ممحاة") { restore=false }
-        val restoreButton=button("استرجاع") {
-            if(restoreCutout==null) Toast.makeText(this,"أعد العزل لتفعيل الاسترجاع",Toast.LENGTH_SHORT).show()
+        modes.addView(button("ممحاة") { restore=false },LinearLayout.LayoutParams(0,dp(48),1f))
+        modes.addView(button("استرجاع جزء") {
+            if(restoreSource==null) Toast.makeText(this,"أعد العزل لتفعيل استرجاع التفاصيل",Toast.LENGTH_LONG).show()
             else restore=true
-        }
-        modes.addView(eraseButton,LinearLayout.LayoutParams(0,dp(48),1f))
-        modes.addView(restoreButton,LinearLayout.LayoutParams(0,dp(48),1f))
+        },LinearLayout.LayoutParams(0,dp(48),1f))
         layout.addView(modes)
-        val sizeLabel=txt("حجم الفرشاة",14f,Color.DKGRAY)
-        layout.addView(sizeLabel)
-        val slider=SeekBar(this).apply { max=70; progress=14; setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar:SeekBar?,progress:Int,fromUser:Boolean) { radius=(progress+3).toFloat() }
-            override fun onStartTrackingTouch(bar:SeekBar?) {}
-            override fun onStopTrackingTouch(bar:SeekBar?) {}
-        }) }
-        layout.addView(slider)
+        layout.addView(txt("حجم الفرشاة",13f,Color.DKGRAY))
+        layout.addView(SeekBar(this).apply {
+            max=65;progress=9
+            setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar:SeekBar?,value:Int,fromUser:Boolean) { radius=(value+3).toFloat() }
+                override fun onStartTrackingTouch(bar:SeekBar?) {}
+                override fun onStopTrackingTouch(bar:SeekBar?) {}
+            })
+        })
         layout.addView(button("تراجع عن آخر تعديل") { drawing.undo() })
-        val dialog=AlertDialog.Builder(this).setTitle("تصحيح الصورة يدويًا").setView(layout)
-            .setNegativeButton("إلغاء",null)
+        val dialog=AlertDialog.Builder(this).setTitle("تصحيح الصورة يدويًا")
+            .setView(layout).setNegativeButton("إلغاء",null)
             .setPositiveButton("اعتماد التصحيح",null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
