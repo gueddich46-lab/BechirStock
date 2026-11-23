@@ -146,18 +146,19 @@ class MainActivity : Activity() {
         root.addView(txt("بشير ستوك", 19f).apply { gravity=Gravity.CENTER; setPadding(0,0,0,0) })
         root.addView(txt("إدارة تجارة الفريب الخاصة بي", 14f,Color.rgb(197,186,215)).apply { gravity=Gravity.CENTER })
         val arr = items()
-        var stock = 0; var sold = 0; var cost = 0.0; var revenue = 0.0; var profit = 0.0
+        var stock = 0; var sold = 0; var cost = 0.0; var revenue = 0.0; var profit = 0.0; var expectedProfit = 0.0
         for (i in 0 until arr.length()) {
             val it = arr.getJSONObject(i)
             val quantity = it.optInt("quantity", 1); val soldQty = it.optInt("sold", 0)
             val unitCost = it.optDouble("cost", 0.0); val sale = it.optDouble("sale", 0.0)
             stock += quantity - soldQty; sold += soldQty; cost += (quantity - soldQty) * unitCost
+            expectedProfit += (quantity - soldQty) * (sale - unitCost)
             revenue += soldQty * sale; profit += soldQty * (sale - unitCost)
         }
         root.addView(txt("ملخص تجارتك", 16f, accent))
         rowCards("الربح المحقق" to "${fmt.format(profit)} د.ت", "المبيعات" to "$sold قطعة",true)
         rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
-        rowCards("قيمة المشتريات" to "${fmt.format(cost + (0.0))} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
+        rowCards("الربح المتوقع للمخزون" to "${fmt.format(expectedProfit)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
         root.addView(txt("جميع بياناتك محفوظة محليًا على هذا الهاتف.",13f,Color.LTGRAY))
     }
@@ -246,11 +247,49 @@ class MainActivity : Activity() {
             if (item.optString("size").isNotBlank()) product.addView(txt("القياس: "+item.optString("size"),16f))
             product.addView(txt("المتبقي: $remaining من ${item.optInt("quantity")}  |  التكلفة: ${fmt.format(item.optDouble("cost"))} د.ت",14f,Color.LTGRAY))
             product.addView(txt("سعر البيع: ${fmt.format(item.optDouble("sale"))} د.ت",17f,Color.rgb(103,240,157)))
+            if (remaining > 0) product.addView(txt("الربح المتوقع للقطعة: ${fmt.format(item.optDouble("sale") - item.optDouble("cost"))} د.ت",15f,accent))
+            product.addView(button("📷 تعديل صورة القطعة") { editPhoto(i) })
             if (remaining > 0) product.addView(button("تسجيل بيع قطعة") { sell(i) })
             root.addView(product, LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(12) })
         }
     }
 
+
+    private fun editPhoto(index: Int) {
+        val item = items().getJSONObject(index)
+        val originalUri = item.optString("photo")
+        if(originalUri.isBlank()) {
+            Toast.makeText(this,"لا توجد صورة مسجلة لهذه القطعة",Toast.LENGTH_LONG).show()
+            return
+        }
+        pendingPhoto = Uri.parse(originalUri)
+        processedPhoto = null
+        page("تحسين صورة القطعة")
+        root.addView(txt(item.optString("name"),20f))
+        photoPreview = ImageView(this).apply {
+            scaleType=ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds=true
+            try { setImageURI(pendingPhoto) } catch (_:Exception) {}
+        }
+        root.addView(photoPreview,LinearLayout.LayoutParams(-1,dp(240)))
+        root.addView(button("✨ إزالة الخلفية وجعلها بيضاء") { removeBackground() })
+        root.addView(button("↩ استعادة الصورة الأصلية") {
+            processedPhoto=null
+            photoPreview?.setImageURI(Uri.parse(originalUri))
+        })
+        root.addView(button("حفظ الصورة الجديدة") {
+            val edited=processedPhoto
+            if(edited.isNullOrBlank()) {
+                Toast.makeText(this,"عالج الصورة أولًا، أو اضغط رجوع",Toast.LENGTH_LONG).show()
+            } else {
+                val arr=items()
+                arr.getJSONObject(index).put("photo",edited)
+                save(arr)
+                inventory()
+            }
+        })
+        root.addView(button("رجوع") { inventory() })
+    }
     private fun removeBackground() {
         val source = pendingPhoto
         if (source == null) {
