@@ -181,6 +181,7 @@ class MainActivity : Activity() {
         rowCards("المخزون" to "$stock قطعة", "قيمة المخزون" to "${fmt.format(cost)} د.ت")
         rowCards("الربح المتوقع للمخزون" to "${fmt.format(expectedProfit)} د.ت", "إجمالي المبيعات" to "${fmt.format(revenue)} د.ت")
         menu()
+        root.addView(button("QR Code • مشاركة التطبيق") { shareAppQr() },LinearLayout.LayoutParams(-1,dp(50)).apply { bottomMargin=dp(12) })
         val backupCard=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL
             background=shape(soft,18)
@@ -730,6 +731,18 @@ class MainActivity : Activity() {
             segmenter.close()
             Toast.makeText(this,"تعذر فتح الصورة. اختر صورة أخرى.",Toast.LENGTH_LONG).show()
         }
+    }
+    private fun shareAppQr() {
+        val url="https://github.com/gueddich46-lab/BechirStock/releases/download/stock-download/BECHIR-STOCK.apk"
+        val matrix=com.google.zxing.qrcode.QRCodeWriter().encode(url,com.google.zxing.BarcodeFormat.QR_CODE,600,600)
+        val pixels=IntArray(600*600) { i -> if(matrix.get(i%600,i/600)) Color.BLACK else Color.WHITE }
+        val bitmap=Bitmap.createBitmap(pixels,600,600,Bitmap.Config.ARGB_8888)
+        val image=ImageView(this).apply { setImageBitmap(bitmap); scaleType=ImageView.ScaleType.FIT_CENTER; setPadding(dp(12),dp(12),dp(12),dp(12)) }
+        AlertDialog.Builder(this).setTitle("BECHIR STOCK • QR Code").setView(image)
+            .setNegativeButton("إغلاق",null)
+            .setPositiveButton("مشاركة الرابط") { _,_ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type="text/plain";putExtra(Intent.EXTRA_TEXT,url) },"مشاركة التطبيق"))
+            }.show()
     }
     private fun backupScreen() {
         page("النسخ الاحتياطي")
